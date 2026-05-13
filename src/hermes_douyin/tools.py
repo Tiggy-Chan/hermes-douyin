@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -14,38 +17,72 @@ logger = logging.getLogger(__name__)
 # ── Constants ─────────────────────────────────────────────────────────
 
 COOKIE_DIR = Path.home() / ".hermes" / "douyin"
+SAU_DIR = COOKIE_DIR / "sau"
 DEFAULT_COOKIE_FILE = COOKIE_DIR / "cookies.json"
 
 COMMON_STRING = {"type": "string"}
 COMMON_STRING_OPT = {"type": "string", "description": "Optional"}
+
+# ── SAU path management ──────────────────────────────────────────────
+
+_sau_initialized = False
+
+
+def _ensure_sau_path():
+    """Add SAU to sys.path and ensure conf.py exists."""
+    global _sau_initialized
+    if _sau_initialized:
+        return True
+
+    if not SAU_DIR.exists():
+        return False
+
+    sau_str = str(SAU_DIR)
+    if sau_str not in sys.path:
+        sys.path.insert(0, sau_str)
+
+    # Ensure conf.py exists
+    conf_path = SAU_DIR / "conf.py"
+    if not conf_path.exists():
+        conf_example = SAU_DIR / "conf.example.py"
+        if conf_example.exists():
+            import shutil
+            shutil.copy(conf_example, conf_path)
+        else:
+            # Create minimal conf.py
+            conf_path.write_text(
+                f'from pathlib import Path\n\n'
+                f'BASE_DIR = Path("{SAU_DIR}")\n'
+                f'XHS_SERVER = "http://127.0.0.1:11901"\n'
+                f'LOCAL_CHROME_PATH = ""\n'
+                f'LOCAL_CHROME_HEADLESS = True\n'
+                f'DEBUG_MODE = True\n'
+            )
+
+    _sau_initialized = True
+    return True
+
 
 # ── Availability check ────────────────────────────────────────────────
 
 
 def _check_douyin_available() -> bool:
     """Check if Douyin dependencies are installed."""
+    # Check patchright
     try:
         import patchright  # noqa: F401
     except ImportError:
         return False
-    # Check if social-auto-upload is available
+
+    # Check SAU
+    if not _ensure_sau_path():
+        return False
+
     try:
         from uploader.douyin_uploader.main import DouYinVideo  # noqa: F401
         return True
     except ImportError:
-        pass
-    # Try finding SAU in common locations
-    import sys
-    for candidate in [
-        Path.home() / "social-auto-upload",
-        Path.home() / "projects" / "social-auto-upload",
-        Path.home() / "tools" / "social-auto-upload",
-    ]:
-        if (candidate / "uploader" / "douyin_uploader" / "main.py").exists():
-            if str(candidate) not in sys.path:
-                sys.path.insert(0, str(candidate))
-            return True
-    return False
+        return False
 
 
 # ── Helper functions ──────────────────────────────────────────────────
@@ -69,8 +106,8 @@ DOUYIN_AUTH_SCHEMA = {
     "description": (
         "Manage Douyin authentication. Actions: 'login' (QR code login to get cookies), "
         "'check' (verify if current cookie is valid), 'logout' (delete stored cookies). "
-        "Login requires running in headed mode (headless=false) for QR scanning, or the QR "
-        "code image will be saved to a file for manual scanning."
+        "Login opens a browser window with a QR code — scan it with the Douyin mobile app. "
+        "The browser must run in headed mode (headless=false) for QR scanning."
     ),
     "parameters": {
         "type": "object",
@@ -86,7 +123,7 @@ DOUYIN_AUTH_SCHEMA = {
             },
             "headless": {
                 "type": "boolean",
-                "description": "Run browser headless (default: true). Set false for visible browser during QR login.",
+                "description": "Run browser headless (default: false for login, true for check).",
             },
         },
         "required": ["action"],
@@ -184,7 +221,7 @@ def _handle_douyin_auth(args: Dict[str, Any]) -> str:
     """Handle douyin_auth tool calls."""
     action = args.get("action", "check")
     account = args.get("account", "default")
-    headless = args.get("headless", True)
+    headless = args.get("headless", action != "login")  # headed for login by default
     cookie_path = str(_get_cookie_path(account))
 
     try:
@@ -218,7 +255,8 @@ def _handle_douyin_auth(args: Dict[str, Any]) -> str:
             if not _check_douyin_available():
                 return tool_error(
                     "social-auto-upload not installed.\n"
-                    "Install: pip install social-auto-upload && patchright install chromium"
+                    "SAU should be at ~/.hermes/douyin/sau/\n"
+                    "Reinstall: git clone https://github.com/dreammis/social-auto-upload ~/.hermes/douyin/sau"
                 )
 
             from uploader.douyin_uploader.main import douyin_setup
@@ -281,28 +319,20 @@ def _handle_douyin_status(args: Dict[str, Any]) -> str:
     cookie_exists = cookie_path.exists()
     cookie_age = None
     if cookie_exists:
-        import time
         cookie_age = (time.time() - cookie_path.stat().st_mtime) / 3600
 
     # Check patchright/chromium
     chromium_ok = False
     try:
-        import subprocess
-        result = subprocess.run(
-            ["patchright", "install", "--dry-run"],
-            capture_output=True, timeout=10
-        )
-        chromium_ok = result.returncode == 0
+        from patchright.sync_api import sync_playwright
+        chromium_ok = True
     except Exception:
-        try:
-            from patchright.sync_api import sync_playwright
-            chromium_ok = True
-        except Exception:
-            pass
+        pass
 
     return tool_result({
         "platform": "douyin",
         "account": account,
+        "sau_dir": str(SAU_DIR),
         "sau_installed": sau_installed,
         "cookie_file": str(cookie_path),
         "cookie_exists": cookie_exists,
@@ -326,7 +356,7 @@ def _handle_douyin_upload(args: Dict[str, Any]) -> str:
     if not _check_douyin_available():
         return tool_error(
             "social-auto-upload not installed.\n"
-            "Install: pip install social-auto-upload && patchright install chromium"
+            "SAU should be at ~/.hermes/douyin/sau/"
         )
 
     if not _cookie_exists(account):
@@ -380,7 +410,7 @@ def _handle_douyin_upload(args: Dict[str, Any]) -> str:
                 return tool_result({
                     "success": False,
                     "content_type": "video",
-                    "message": "Upload returned false. Check browser logs or try headless=false for debugging.",
+                    "message": "Upload returned false. Try headless=false for debugging.",
                 })
 
         elif content_type == "note":
@@ -426,7 +456,7 @@ def _handle_douyin_upload(args: Dict[str, Any]) -> str:
                 return tool_result({
                     "success": False,
                     "content_type": "note",
-                    "message": "Upload returned false. Check browser logs.",
+                    "message": "Upload returned false. Try headless=false for debugging.",
                 })
 
         else:
