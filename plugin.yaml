@@ -1,0 +1,12 @@
+name: douyin
+version: 0.1.0
+description: >
+  Douyin (抖音) integration — upload videos and image notes to Douyin
+  via browser automation (patchright/Playwright). Powered by
+  social-auto-upload. Auth via QR code login.
+author: Tiggy_Chan
+kind: backend
+provides_tools:
+  - douyin_upload
+  - douyin_auth
+  - douyin_status
