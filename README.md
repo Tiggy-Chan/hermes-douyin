@@ -22,17 +22,25 @@ Upload videos and image notes to Douyin via browser automation, powered by [soci
 
 ## Installation
 
-### 1. Install dependencies
+### 1. Install the plugin
 
 ```bash
-pip install social-auto-upload
-patchright install chromium
+# Clone the project
+git clone https://github.com/Tiggy-Chan/hermes-douyin ~/projects/hermes-douyin
+
+# Symlink to Hermes plugins
+ln -sf ~/projects/hermes-douyin ~/.hermes/plugins/douyin
 ```
 
-### 2. Symlink to Hermes plugins
+### 2. Install social-auto-upload (backend)
 
 ```bash
-ln -sf ~/projects/hermes-douyin ~/.hermes/plugins/douyin
+# SAU will be installed to ~/.hermes/douyin/sau/
+mkdir -p ~/.hermes/douyin
+git clone https://github.com/dreammis/social-auto-upload ~/.hermes/douyin/sau
+cd ~/.hermes/douyin/sau
+pip install -e .
+patchright install chromium
 ```
 
 ### 3. Enable in config.yaml (optional)
@@ -117,6 +125,7 @@ hermes-douyin/
 
 Uses `social-auto-upload` as the backend for browser automation.
 Cookie files stored at `~/.hermes/douyin/cookies_<account>.json`.
+SAU backend at `~/.hermes/douyin/sau/`.
 
 ## Cookie Management
 
@@ -130,7 +139,9 @@ Cookie files stored at `~/.hermes/douyin/cookies_<account>.json`.
 ### "social-auto-upload not installed"
 
 ```bash
-pip install social-auto-upload
+git clone https://github.com/dreammis/social-auto-upload ~/.hermes/douyin/sau
+cd ~/.hermes/douyin/sau
+pip install -e .
 ```
 
 ### "Chromium not found"
